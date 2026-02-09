@@ -1,0 +1,264 @@
+Total files reviewed: 657
+Relevant files with issues: 5
+
+File: server\app.py
+  - Issue: Hard-coded SECRET_KEY in source code
+    Line: 9
+    Severity: Critical
+    Confidence: 0.95
+    Snippet: app.config['SECRET_KEY'] = 'super_secret_key_123' # Weak key, but standard for dev
+--------------------
+  - Issue: Predictable/default administrative credentials created in seed_data()
+    Line: 33
+    Severity: Critical
+    Confidence: 0.95
+    Snippet: admin = User(username='admin', password='admin123', is_admin=True)
+user = User(username='user', password='password', is_admin=False)
+--------------------
+  - Issue: Plaintext passwords stored via model creation (no hashing shown)
+    Line: 33
+    Severity: Critical
+    Confidence: 0.9
+    Snippet: admin = User(username='admin', password='admin123', is_admin=True)
+user = User(username='user', password='password', is_admin=False)
+--------------------
+  - Issue: Global, unrestricted CORS enabled
+    Line: 11
+    Severity: Medium
+    Confidence: 0.9
+    Snippet: CORS(app)
+--------------------
+  - Issue: Development debug server enabled in __main__ (app.run(debug=True))
+    Line: 45
+    Severity: High
+    Confidence: 0.95
+    Snippet: if __name__ == '__main__':
+    app = create_app()
+    app.run(debug=True, port=5000)
+--------------------
+  - Issue: Automatic schema creation at startup using db.create_all()
+    Line: 26
+    Severity: Medium
+    Confidence: 0.75
+    Snippet: db.create_all()
+--------------------
+  - Issue: Use of a local SQLite file-based database in configuration
+    Line: 7
+    Severity: Low
+    Confidence: 0.65
+    Snippet: app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///juicypro.db'
+--------------------
+
+File: server\routes\admin.py
+  - Issue: Command injection via shell=True with untrusted host input
+    Line: 14
+    Severity: Critical
+    Confidence: 0.95
+    Snippet: # VULNERABILITY: Command Injection
+    # "Ping" utility for admin to check server connectivity
+    param = '-n' if platform.system().lower() == 'windows' else '-c'
+    command = f"ping {param} 1 {host}"
+    
+    try:
+        # shell=True is the key here
+        output = subprocess.check_output(command, shell=True, stderr=subprocess.STDOUT)
+--------------------
+  - Issue: Missing enforcement of authentication/authorization for admin route
+    Line: 4
+    Severity: High
+    Confidence: 0.9
+    Snippet: admin_bp = Blueprint('admin', __name__)
+
+# Assume admin check middleware is applied here in real app
+# For this demo, we'll just leave it open or assume the attacker has found a way
+
+@admin_bp.route('/system-check', methods=['POST'])
+def system_check():
+--------------------
+  - Issue: Information disclosure by returning raw command output (stdout and stderr) to client
+    Line: 21
+    Severity: Medium
+    Confidence: 0.9
+    Snippet: output = subprocess.check_output(command, shell=True, stderr=subprocess.STDOUT)
+        return jsonify({'output': output.decode('utf-8')})
+    except subprocess.CalledProcessError as e:
+        return jsonify({'output': e.output.decode('utf-8')}), 500
+--------------------
+  - Issue: No input validation or whitelisting of the 'host' parameter
+    Line: 11
+    Severity: High
+    Confidence: 0.85
+    Snippet: data = request.get_json()
+    host = data.get('host', 'localhost')
+    
+    # VULNERABILITY: Command Injection
+    # "Ping" utility for admin to check server connectivity
+    param = '-n' if platform.system().lower() == 'windows' else '-c'
+    command = f"ping {param} 1 {host}"
+--------------------
+
+File: server\routes\user.py
+  - Issue: Insecure direct object reference (IDOR) — order detail endpoint allows access to any order and leaks user_id
+    Line: 34
+    Severity: High
+    Confidence: 0.95
+    Snippet: @user_bp.route('/orders/<int:order_id>', methods=['GET'])
+@token_required
+def get_order_detail(current_user, order_id):
+    # VULNERABILITY: IDOR
+    # No check if order.user_id == current_user.id
+    order = Order.query.get(order_id)
+    if not order:
+        return jsonify({'message': 'Order not found'}), 404
+        
+    return jsonify({
+        'id': order.id,
+        'user_id': order.user_id, # Leaking user_id
+        'total': order.total_amount,
+        'status': order.status,
+        'items': '...' # Placeholder
+    })
+--------------------
+  - Issue: Brittle Authorization header parsing may raise exceptions and treats malformed headers as generic invalid token
+    Line: 8
+    Severity: Medium
+    Confidence: 0.9
+    Snippet: def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = None
+        if 'Authorization' in request.headers:
+            token = request.headers['Authorization'].split(" ")[1]
+        if not token:
+            return jsonify({'message': 'Token is missing!'}), 401
+--------------------
+  - Issue: No check that decoded JWT user exists; passing None as current_user can cause server errors
+    Line: 16
+    Severity: Medium
+    Confidence: 0.95
+    Snippet: try:
+            data = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=["HS256"])
+            current_user = User.query.get(data['user_id'])
+        except:
+            return jsonify({'message': 'Token is invalid!'}), 401
+        return f(current_user, *args, **kwargs)
+--------------------
+  - Issue: Broad exception handling around token decode masks specific errors
+    Line: 17
+    Severity: Medium
+    Confidence: 0.9
+    Snippet: try:
+            data = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=["HS256"])
+            current_user = User.query.get(data['user_id'])
+        except:
+            return jsonify({'message': 'Token is invalid!'}), 401
+--------------------
+
+File: server\routes\products.py
+  - Issue: SQL Injection via unsanitized query interpolation in raw SQL
+    Line: 9
+    Severity: High
+    Confidence: 0.95
+    Snippet: if query:
+        # VULNERABILITY: SQL Injection via direct string concatenation
+        # Hidden as a "performance optimization" for complex text search
+        sql = f"SELECT * FROM product WHERE name LIKE '%{query}%' OR description LIKE '%{query}%'"
+        try:
+            result = db.session.execute(text(sql))
+--------------------
+  - Issue: Stored Cross-Site Scripting (XSS) — storing unsanitized user content
+    Line: 36
+    Severity: High
+    Confidence: 0.95
+    Snippet: @products_bp.route('/<int:id>/review', methods=['POST'])
+def add_review(id):
+    # VULNERABILITY: Stored XSS
+    # Content is stored directly and will be rendered by frontend dangerously
+    data = request.get_json()
+    # Assume user_id comes from token middleware (simplified here for brevity, assume user_id=1 if not provided)
+    # In real implementation, we'd decode the token.
+    user_id = data.get('user_id', 2) 
+    
+    new_review = Review(product_id=id, user_id=user_id, content=data['content'], rating=data['rating'])
+    db.session.add(new_review)
+    db.session.commit()
+--------------------
+  - Issue: Broken authentication/authorization: trust of user-controlled user_id in request body
+    Line: 44
+    Severity: High
+    Confidence: 0.9
+    Snippet: # Assume user_id comes from token middleware (simplified here for brevity, assume user_id=1 if not provided)
+    # In real implementation, we'd decode the token.
+    user_id = data.get('user_id', 2) 
+    
+    new_review = Review(product_id=id, user_id=user_id, content=data['content'], rating=data['rating'])
+--------------------
+  - Issue: Missing input validation for review fields (rating and content)
+    Line: 43
+    Severity: Medium
+    Confidence: 0.8
+    Snippet: data = request.get_json()
+    # Assume user_id comes from token middleware (simplified here for brevity, assume user_id=1 if not provided)
+    # In real implementation, we'd decode the token.
+    user_id = data.get('user_id', 2) 
+    
+    new_review = Review(product_id=id, user_id=user_id, content=data['content'], rating=data['rating'])
+--------------------
+
+File: server\routes\auth.py
+  - Issue: Plaintext password storage and comparison
+    Line: 1
+    Severity: Critical
+    Confidence: 1.0
+    Snippet: user = User.query.filter_by(username=username, password=password).first()
+
+...
+
+new_user = User(username=data['username'], password=data['password'])
+--------------------
+  - Issue: JWT contains privileged claim and relies on a single secret key; risk of token forgery or stale privileges
+    Line: 17
+    Severity: Critical
+    Confidence: 0.9
+    Snippet: token = jwt.encode({
+            'user_id': user.id,
+            'is_admin': user.is_admin,
+            'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24)
+        }, current_app.config['SECRET_KEY'], algorithm='HS256')
+--------------------
+  - Issue: No input validation/sanitization for username and password
+    Line: 1
+    Severity: Medium
+    Confidence: 0.85
+    Snippet: data = request.get_json()
+username = data.get('username')
+password = data.get('password')
+
+...
+
+# register
+data = request.get_json()
+if User.query.filter_by(username=data['username']).first():
+--------------------
+  - Issue: Username enumeration via different error messages
+    Line: 1
+    Severity: Medium
+    Confidence: 0.85
+    Snippet: if User.query.filter_by(username=data['username']).first():
+        return jsonify({'message': 'Username taken'}), 400
+...
+if user:
+    return jsonify({'token': token, 'user': {'username': user.username, 'is_admin': user.is_admin}})
+
+return jsonify({'message': 'Invalid credentials'}), 401
+--------------------
+  - Issue: No rate limiting or brute-force protection on authentication endpoints
+    Line: 7
+    Severity: Medium
+    Confidence: 0.75
+    Snippet: @auth_bp.route('/login', methods=['POST'])
+def login():
+    data = request.get_json()
+    username = data.get('username')
+    password = data.get('password')
+--------------------
